@@ -115,6 +115,7 @@ fleet_tables_*.ext
 
 # Local dev files
 .env
+.env.production
 .tool-versions
 .zed/
 third_party/vuln-check/go.sum
@@ -125,3 +126,6 @@ Fleet\ Desktop.app
 
 # custom golangci-lint executable
 custom-gcl
+
+# Deployment backups
+backups/

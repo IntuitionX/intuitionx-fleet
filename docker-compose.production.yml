@@ -1,0 +1,86 @@
+services:
+  fleet:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    restart: always
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      FLEET_MYSQL_ADDRESS: mysql:3306
+      FLEET_MYSQL_DATABASE: ${FLEET_DB_NAME:-fleet}
+      FLEET_MYSQL_USERNAME: ${FLEET_DB_USER:-fleet}
+      FLEET_MYSQL_PASSWORD: ${FLEET_DB_PASSWORD:-insecure}
+      FLEET_REDIS_ADDRESS: redis:6379
+      FLEET_SERVER_ADDRESS: 0.0.0.0:8080
+      FLEET_SERVER_TLS: ${FLEET_SERVER_TLS:-false}
+      FLEET_LOGGING_JSON: "true"
+    env_file:
+      - .env
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+        reservations:
+          cpus: "1"
+          memory: 1G
+
+  mysql:
+    image: mysql:8.0.44
+    restart: always
+    command:
+      - mysqld
+      - --datadir=/var/lib/mysql
+      - --enforce-gtid-consistency=ON
+      - --log-bin=bin.log
+      - --server-id=1
+      - --max_allowed_packet=536870912
+    environment:
+      MYSQL_ROOT_PASSWORD: ${FLEET_DB_ROOT_PASSWORD:-toor}
+      MYSQL_DATABASE: ${FLEET_DB_NAME:-fleet}
+      MYSQL_USER: ${FLEET_DB_USER:-fleet}
+      MYSQL_PASSWORD: ${FLEET_DB_PASSWORD:-insecure}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${FLEET_DB_ROOT_PASSWORD:-toor}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+
+volumes:
+  mysql-data:
+  redis-data:

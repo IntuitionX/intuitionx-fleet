@@ -1,0 +1,54 @@
+# Multi-stage build for Fleet server
+FROM golang:1.26-bookworm AS backend
+
+WORKDIR /usr/src/fleet
+
+# Copy go module files first for better caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the Fleet binary
+RUN CGO_ENABLED=1 \
+    go build \
+    -ldflags "-X github.com/fleetdm/fleet/v4/server/version.version=production" \
+    -o /fleet \
+    ./cmd/fleet
+
+# Build frontend assets
+FROM node:24-bookworm AS frontend
+
+WORKDIR /usr/src/fleet
+
+COPY package.json yarn.lock ./
+COPY frontend ./frontend
+COPY .storybook ./.storybook
+COPY tsconfig.json webpack.config.js babel.config.js ./
+
+RUN yarn install --frozen-lockfile
+RUN yarn build
+
+# Final production image
+FROM debian:bookworm-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create fleet user
+RUN groupadd -r fleet && useradd -r -g fleet fleet
+
+# Copy binary and frontend assets
+COPY --from=backend /fleet /usr/bin/fleet
+COPY --from=frontend /usr/src/fleet/frontend/build /usr/src/fleet/frontend/build
+
+USER fleet
+
+EXPOSE 8080
+
+CMD ["fleet", "serve"]

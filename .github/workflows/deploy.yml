@@ -1,0 +1,134 @@
+name: Deploy to Hostinger VPS
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch: # Allow manual trigger
+
+env:
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+
+      - name: Add VPS to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Test SSH connection
+        run: |
+          ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "echo 'SSH connection successful'"
+
+      - name: Deploy to VPS
+        run: |
+          ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'ENDSSH'
+            set -e
+
+            echo "Starting deployment..."
+
+            # Navigate to application directory
+            APP_PATH="${{ secrets.VPS_APP_PATH }}"
+            cd "$APP_PATH" || {
+              echo "Application directory not found: $APP_PATH"
+              echo "Creating directory..."
+              sudo mkdir -p "$APP_PATH"
+              sudo chown $USER:$USER "$APP_PATH"
+              cd "$APP_PATH"
+
+              # Clone repository if it doesn't exist
+              if [ ! -d .git ]; then
+                echo "Cloning repository..."
+                GIT_REPO="${{ secrets.GIT_REPO_URL }}"
+                if [ -z "$GIT_REPO" ]; then
+                  GIT_REPO="https://github.com/${{ github.repository }}.git"
+                fi
+                git clone "$GIT_REPO" .
+              fi
+            }
+
+            # Pull latest code
+            echo "Pulling latest code..."
+            git fetch origin
+            CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+            git reset --hard origin/$CURRENT_BRANCH || git reset --hard origin/main || git reset --hard origin/master
+
+            # Copy production environment file if it exists
+            if [ -f .env.production ]; then
+              echo "Using production environment file..."
+              cp .env.production .env
+            fi
+
+            # Backup current deployment
+            echo "Creating backup..."
+            if [ -f docker-compose.production.yml ]; then
+              BACKUP_DIR="backups/$(date +%Y%m%d_%H%M%S)"
+              mkdir -p "$BACKUP_DIR"
+              docker compose ps > "$BACKUP_DIR/containers.txt" 2>/dev/null || true
+              docker compose -f docker-compose.production.yml config > "$BACKUP_DIR/docker-compose.yml" 2>/dev/null || true
+            fi
+
+            # Stop existing containers gracefully
+            echo "Stopping existing containers..."
+            docker compose -f docker-compose.production.yml down || true
+
+            # Build and start containers
+            echo "Building and starting containers..."
+            docker compose -f docker-compose.production.yml build --no-cache
+            docker compose -f docker-compose.production.yml up -d
+
+            # Wait for services to be healthy
+            echo "Waiting for services to start..."
+            sleep 20
+
+            # Health check
+            echo "Running health checks..."
+            max_attempts=30
+            attempt=0
+
+            while [ $attempt -lt $max_attempts ]; do
+              if curl -f http://localhost:8080/healthz > /dev/null 2>&1; then
+                echo "Fleet server is healthy!"
+                break
+              fi
+              attempt=$((attempt + 1))
+              echo "Attempt $attempt/$max_attempts..."
+              sleep 5
+            done
+
+            if [ $attempt -eq $max_attempts ]; then
+              echo "Health check timeout. Check logs:"
+              docker compose -f docker-compose.production.yml logs --tail=50
+            fi
+
+            # Clean up old images
+            echo "Cleaning up old Docker images..."
+            docker image prune -f || true
+
+            # Show running containers
+            echo "Current containers:"
+            docker compose -f docker-compose.production.yml ps
+
+            echo "Deployment completed!"
+          ENDSSH
+
+      - name: Deployment Summary
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Code deployed to VPS" >> $GITHUB_STEP_SUMMARY
+          echo "- Containers rebuilt and restarted" >> $GITHUB_STEP_SUMMARY
+          echo "- Health checks completed" >> $GITHUB_STEP_SUMMARY
