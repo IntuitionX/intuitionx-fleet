@@ -1,8 +1,6 @@
 services:
   fleet:
-    build:
-      context: .
-      dockerfile: Dockerfile.production
+    image: ghcr.io/intuitionx/intuitionx-fleet/fleet:latest
     restart: always
     ports:
       - "8080:8080"
