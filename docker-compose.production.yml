@@ -21,7 +21,8 @@ services:
       FLEET_SERVER_TLS: ${FLEET_SERVER_TLS:-false}
       FLEET_LOGGING_JSON: "true"
     env_file:
-      - .env
+      - path: .env
+        required: false
     deploy:
       resources:
         limits:
