@@ -1,22 +1,12 @@
-# Stage 1: Build frontend assets
-FROM node:24-bookworm AS frontend
+# Single builder stage: frontend and backend are tightly coupled
+# (frontend imports from pkg/, server/, schema/ directories)
+FROM golang:1.26-bookworm AS builder
 
-WORKDIR /usr/src/fleet
-
-COPY package.json yarn.lock ./
-RUN yarn install --frozen-lockfile
-
-COPY webpack.config.js babel.config.json tsconfig.json ./
-COPY assets ./assets
-COPY frontend ./frontend
-COPY .storybook ./.storybook
-
-RUN NODE_ENV=production yarn run webpack --progress
-
-# Stage 2: Build Go binary (needs frontend assets for go-bindata embedding)
-FROM golang:1.26-bookworm AS backend
-
-RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev && rm -rf /var/lib/apt/lists/*
+# Install Node.js 24 and Yarn
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs gcc libc6-dev && \
+    npm install -g yarn && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src/fleet
 
@@ -24,12 +14,15 @@ WORKDIR /usr/src/fleet
 COPY go.mod go.sum ./
 RUN go mod download
 
+# Copy package files for node caching
+COPY package.json yarn.lock ./
+RUN yarn install --frozen-lockfile
+
 # Copy full source
 COPY . .
 
-# Copy built frontend assets from stage 1
-COPY --from=frontend /usr/src/fleet/assets ./assets
-COPY --from=frontend /usr/src/fleet/frontend/templates ./frontend/templates
+# Build frontend assets with webpack
+RUN NODE_ENV=production yarn run webpack --progress
 
 # Generate go-bindata (embed frontend assets into Go source)
 RUN mkdir -p build/linux build/darwin && \
@@ -43,7 +36,7 @@ RUN CGO_ENABLED=1 go build -tags full,fts5,netgo \
     -o /fleet \
     ./cmd/fleet
 
-# Stage 3: Minimal runtime image
+# Minimal runtime image
 FROM debian:bookworm-slim
 
 RUN apt-get update && \
@@ -55,7 +48,7 @@ RUN apt-get update && \
 
 RUN groupadd -r fleet && useradd -r -g fleet fleet
 
-COPY --from=backend /fleet /usr/bin/fleet
+COPY --from=builder /fleet /usr/bin/fleet
 
 USER fleet
 
