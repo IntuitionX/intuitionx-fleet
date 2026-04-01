@@ -15,6 +15,7 @@ jobs:
   deploy:
     name: Deploy to Production
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
       - name: Checkout code
@@ -36,7 +37,7 @@ jobs:
 
       - name: Deploy to VPS
         run: |
-          ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'ENDSSH'
+          ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=60 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'ENDSSH'
             set -e
 
             echo "Starting deployment..."
@@ -91,13 +92,13 @@ jobs:
             docker compose -f docker-compose.production.yml build --no-cache
             docker compose -f docker-compose.production.yml up -d
 
-            # Wait for services to be healthy
+            # Wait for services to be healthy (fleet prepare db + startup can take a while)
             echo "Waiting for services to start..."
-            sleep 20
+            sleep 30
 
             # Health check
             echo "Running health checks..."
-            max_attempts=30
+            max_attempts=60
             attempt=0
 
             while [ $attempt -lt $max_attempts ]; do
@@ -107,12 +108,12 @@ jobs:
               fi
               attempt=$((attempt + 1))
               echo "Attempt $attempt/$max_attempts..."
-              sleep 5
+              sleep 10
             done
 
             if [ $attempt -eq $max_attempts ]; then
-              echo "Health check timeout. Check logs:"
-              docker compose -f docker-compose.production.yml logs --tail=50
+              echo "Health check timeout. Recent logs:"
+              docker compose -f docker-compose.production.yml logs --tail=20 fleet || true
             fi
 
             # Clean up old images
@@ -127,6 +128,7 @@ jobs:
           ENDSSH
 
       - name: Deployment Summary
+        if: always()
         run: |
           echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "- Code deployed to VPS" >> $GITHUB_STEP_SUMMARY

@@ -54,4 +54,4 @@ USER fleet
 
 EXPOSE 8080
 
-CMD ["fleet", "serve"]
+CMD ["sh", "-c", "fleet prepare db && fleet serve"]
