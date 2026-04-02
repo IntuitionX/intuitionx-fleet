@@ -13,7 +13,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}/fleet
+  IMAGE_NAME: intuitionx/intuitionx-fleet/fleet
 
 jobs:
   build:
@@ -99,7 +99,7 @@ jobs:
             # Log in to GHCR and pull the pre-built image
             echo "Pulling pre-built Fleet image..."
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            docker pull ghcr.io/intuitionx/intuitionx-fleet/fleet:latest
 
             # Backup current deployment
             if docker compose -f docker-compose.production.yml ps -q 2>/dev/null | grep -q .; then
